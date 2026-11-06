@@ -1,5 +1,8 @@
 # Folio
 
+> **Why "Folio"?** A *folio* is a sheet or page of a book or document (Latin *folium*, "leaf").
+> The same root gives *portfolio*: a set of pages you carry. This app is our team's set of pages.
+
 Team docs for 5 people. Notion-style editor, docs stored as Markdown in `dev-projects-team/folio-content`.
 Read `SPEC.md` first.
 
