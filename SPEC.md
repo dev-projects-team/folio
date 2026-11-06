@@ -8,7 +8,8 @@ Docs are Markdown files in a git repo, so every teammate's Claude can read and e
 2. Create, edit, rename and delete docs. Create folders.
 3. Edit in a Notion-style block editor (BlockNote). Save with the button or Cmd+S.
 4. Every save is a git commit in the content repo, with the editor's GitHub name in the message.
-5. Only the 5 allowed GitHub users can sign in.
+5. Only team members can sign in: allowed GitHub users, or username + password users.
+6. Claude and ChatGPT connect through an MCP server with OAuth sign-in.
 
 ## Non-goals (v1)
 Permission matrix, comments, real-time co-editing, AI inside the app, mobile app, file uploads, dashboards (v2).
@@ -34,7 +35,10 @@ Operations: `list()` (recursive tree, `.md` only), `read(path)` → `{content, s
 ## Auth
 - GitHub OAuth app (owned by the org). Routes `/api/auth/login`, `/api/auth/callback`, `/api/auth/logout`.
 - Allowlist: `ALLOWED_GITHUB_USERS` (comma-separated, case-insensitive).
-- Session: HMAC-SHA256 signed cookie (`SESSION_SECRET`), `httpOnly`, `secure`, `sameSite=lax`, 30 days. Payload: login, avatar, expiry.
+- Password users: `PASSWORD_USERS=name:salt:scrypthash,...` (make entries with `pnpm hash-password`). Route `POST /api/auth/password`.
+  The two lists are separate: a GitHub account can never sign in as a password user.
+- Session: HMAC-SHA256 signed cookie (`SESSION_SECRET`), `httpOnly`, `secure`, `sameSite=lax`, 30 days. Payload: login, avatar, via (github|password), expiry.
+- Every session and MCP token is checked against the lists on each request. Remove a user from the env var to revoke them.
 - `proxy.ts` blocks every page and API route without a valid session, except `/login` and `/api/auth/*`.
 - `AUTH_DISABLED=1` only works when `NODE_ENV !== 'production'` (local dev).
 
@@ -47,8 +51,17 @@ Operations: `list()` (recursive tree, `.md` only), `read(path)` → `{content, s
 - `/api/docs` GET tree · POST create `{path, content}`.
 - `/api/docs/[...path]` GET read · PUT save `{content, sha}` · DELETE `{sha}` · PATCH rename `{to}`.
 
-## How Claude edits
-Clone `dev-projects-team/folio-content`, edit `.md` files, commit, push. The app reads GitHub on each request (no cache in v1), so changes show on reload.
+## MCP (Claude, ChatGPT)
+- Endpoint `/api/mcp` (Streamable HTTP, `mcp-handler`). Tools: `list_docs`, `read_doc`, `search_docs`, `write_doc`, `move_doc`, `delete_doc`.
+  Writes need the `sha` from `read_doc`, so an agent cannot overwrite a human's newer edit. Commits use the signed-in user's name.
+- Auth: Folio is its own small OAuth 2.1 server, with no database. Everything is signed with `SESSION_SECRET`:
+  - `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`: discovery.
+  - `POST /api/oauth/register`: Dynamic Client Registration. The client id is the signed list of redirect URIs.
+  - `/oauth/authorize`: sign in (GitHub or password), then Allow. PKCE S256 is required.
+  - `POST /api/oauth/token`: code → access token (1 hour) + refresh token (30 days).
+- `/connect` page: MCP URL, Claude and ChatGPT steps, and a copyable setup prompt.
+- Limits: a code can be reused within its 5 minutes (PKCE still binds it to the client). There is no per-token revoke; revoke by removing the user. No login rate limit.
+- Agents use MCP, not git. The app reads GitHub on each request, so changes show on reload.
 
 ## v2 (later, not built)
 Dashboards pages reading Neon (100-account Instagram tracker, reel metrics), recent docs, full-text search.

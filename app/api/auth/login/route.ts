@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
+import { safeNext } from "@/lib/session";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const state = randomBytes(16).toString("hex");
   const url = new URL("https://github.com/login/oauth/authorize");
   url.searchParams.set("client_id", process.env.GITHUB_CLIENT_ID ?? "");
@@ -10,5 +11,7 @@ export async function GET() {
   url.searchParams.set("state", state);
   const res = NextResponse.redirect(url);
   res.cookies.set("folio_oauth_state", state, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 600, path: "/" });
+  // Where to go after sign-in (for example back to an MCP connect page).
+  res.cookies.set("folio_next", safeNext(req.nextUrl.searchParams.get("next")), { httpOnly: true, secure: true, sameSite: "lax", maxAge: 600, path: "/" });
   return res;
 }

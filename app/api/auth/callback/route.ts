@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { COOKIE, MAX_AGE, allowed, sign } from "@/lib/session";
+import { COOKIE, MAX_AGE, allowed, safeNext, sign } from "@/lib/session";
 
 const fail = (req: NextRequest, why: string) => NextResponse.redirect(new URL(`/login?error=${why}`, req.url));
 
@@ -20,9 +20,10 @@ export async function GET(req: NextRequest) {
   }).then((r) => r.json());
   if (!user.login || !allowed(user.login)) return fail(req, "not-allowed");
 
-  const res = NextResponse.redirect(new URL("/", req.url));
-  const token = await sign({ login: user.login, avatar: user.avatar_url ?? "", exp: Math.floor(Date.now() / 1000) + MAX_AGE });
+  const res = NextResponse.redirect(new URL(safeNext(req.cookies.get("folio_next")?.value), req.url));
+  const token = await sign({ login: user.login, avatar: user.avatar_url ?? "", via: "github", exp: Math.floor(Date.now() / 1000) + MAX_AGE });
   res.cookies.set(COOKIE, token, { httpOnly: true, secure: true, sameSite: "lax", maxAge: MAX_AGE, path: "/" });
   res.cookies.delete("folio_oauth_state");
+  res.cookies.delete("folio_next");
   return res;
 }
