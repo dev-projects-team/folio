@@ -7,7 +7,7 @@ import { Conflict, NotFound, store } from "@/lib/store";
 
 const INSTRUCTIONS = `Folio is the team's shared docs. Each doc is a Markdown file; folders are directories.
 - Paths are relative and end in .md, e.g. "reels/day-3-plan.md". Use letters, numbers, spaces, - _ . and / only.
-- A folder's page is its README.md. To make a folder, create "folder/README.md".
+- Folders are plain containers with no page of their own. Writing "folder/doc.md" creates the folder.
 - Use plain Markdown: headings, lists, checkboxes, links, code, and GitHub tables (| a | b |). No YAML front-matter or HTML; the editor drops them.
 - To change a doc: read_doc first, then write_doc with the sha you read. If it fails with a conflict, read again and merge.
 - Every write is a git commit in the signed-in user's name, so keep edits focused.`;

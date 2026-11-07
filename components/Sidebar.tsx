@@ -5,23 +5,20 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { cleanPath, titleOf } from "@/lib/paths";
 
-type Node = { name: string; path?: string; dir?: string; readme?: string; children: Map<string, Node> };
+type Node = { name: string; path?: string; dir?: string; children: Map<string, Node> };
 type Creating = { mode: "doc" | "folder"; dir: string } | null;
 
 const href = (p: string) => `/d/${p.split("/").map(encodeURIComponent).join("/")}`;
 
-function buildTree(paths: string[]): Node {
+// Folders are plain containers. `folders` adds empty ones; folders of docs come from the doc paths.
+function buildTree(paths: string[], folders: string[]): Node {
   const root: Node = { name: "", children: new Map() };
-  for (const p of paths) {
+  for (const p of [...folders.map((f) => `${f}/`), ...paths]) {
     const parts = p.split("/");
     let n = root;
     parts.forEach((part, i) => {
+      if (!part) return; // trailing "/" of a folder entry
       const leaf = i === parts.length - 1;
-      // A README.md inside a folder is that folder's page, not a separate doc row.
-      if (leaf && part === "README.md" && i > 0) {
-        n.readme = p;
-        return;
-      }
       const key = leaf ? `doc:${part}` : `dir:${part}`;
       const dir = leaf ? undefined : parts.slice(0, i + 1).join("/");
       if (!n.children.has(key)) n.children.set(key, { name: leaf ? titleOf(part) : part, path: leaf ? p : undefined, dir, children: new Map() });
@@ -60,7 +57,11 @@ const ACTIVE = "bg-stone-200/80 font-medium text-stone-900";
 const ICON_BTN = "grid h-6 w-6 place-items-center rounded text-stone-400 transition-colors hover:bg-stone-300/50 hover:text-stone-700";
 
 // ---- Inline "new doc / new folder" row. Enter creates; Esc, the X, or leaving it empty cancels. ----
-function CreateRow({ creating, onCancel, onCreated }: { creating: NonNullable<Creating>; onCancel: () => void; onCreated: (p: string) => void }) {
+function CreateRow({ creating, onCancel, onCreated }: {
+  creating: NonNullable<Creating>;
+  onCancel: () => void;
+  onCreated: (kind: "doc" | "folder", path: string) => void;
+}) {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -70,17 +71,17 @@ function CreateRow({ creating, onCancel, onCreated }: { creating: NonNullable<Cr
     const raw = name.trim().replace(/^\/+|\/+$/g, "").replace(/\.md$/, "");
     if (!raw) return onCancel();
     const full = creating.dir ? `${creating.dir}/${raw}` : raw;
-    const p = cleanPath(folder ? `${full}/README.md` : `${full}.md`);
+    const p = cleanPath(folder ? `${full}/x.md` : `${full}.md`);
     if (!p) return setError("Use letters, numbers, spaces, - _ . and / only.");
     setBusy(true);
     const r = await fetch("/api/docs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: p, content: `# ${raw.split("/").pop()}\n` }),
+      body: JSON.stringify(folder ? { folder: full } : { path: p, content: `# ${raw.split("/").pop()}\n` }),
     });
     setBusy(false);
     if (!r.ok) return setError((await r.json()).error ?? "Could not create.");
-    onCreated(p);
+    onCreated(creating.mode, folder ? full : p);
   }
 
   return (
@@ -130,30 +131,15 @@ function FolderItem({ node, current, creating, onNew, createRow }: TreeProps) {
     if (current.startsWith(`${dir}/`) && !open) setOpen(true);
   }
   const isOpen = open || creating?.dir === dir;
-  const hasKids = node.children.size > 0 || creating?.dir === dir;
-  const active = current === node.readme;
-  const label = (
-    <>
-      <Icon name="folder" className={active ? "text-stone-600" : "text-stone-400"} />
-      <span className="truncate">{node.name}</span>
-    </>
-  );
   return (
     <li>
-      <div className={`${ROW} ${active ? ACTIVE : IDLE} pr-1`}>
-        {hasKids ? (
-          <button onClick={() => setOpen(!isOpen)} className="-ml-0.5 grid h-5 w-5 place-items-center rounded text-stone-400 hover:bg-stone-300/50"
-            aria-label={isOpen ? "Collapse folder" : "Expand folder"} aria-expanded={isOpen}>
-            <Icon name="chevron" className={`h-3.5 w-3.5 transition-transform duration-200 motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
-          </button>
-        ) : (
-          <span className="-ml-0.5 w-5" />
-        )}
-        {node.readme ? (
-          <Link href={href(node.readme)} className="flex min-w-0 flex-1 items-center gap-1.5">{label}</Link>
-        ) : (
-          <button onClick={() => setOpen(!isOpen)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">{label}</button>
-        )}
+      <div className={`${ROW} ${IDLE} pr-1`}>
+        <button onClick={() => setOpen(!isOpen)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          aria-label={`${node.name} folder`} aria-expanded={isOpen}>
+          <Icon name="chevron" className={`-ml-0.5 h-3.5 w-3.5 text-stone-400 transition-transform duration-200 motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
+          <Icon name="folder" className="text-stone-400" />
+          <span className="truncate">{node.name}</span>
+        </button>
         <span className="flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <button onClick={() => onNew({ mode: "doc", dir })} className={ICON_BTN} title={`New doc in ${dir}`} aria-label={`New doc in ${dir}`}>
             <Icon name="plus" className="h-3.5 w-3.5" />
@@ -193,32 +179,63 @@ function TreeView(props: TreeProps) {
           <FolderItem key={`dir:${c.dir}`} {...props} node={c} />
         ),
       )}
+      {node.dir && !items.length && props.creating?.dir !== node.dir && (
+        <li>
+          <button onClick={() => props.onNew({ mode: "doc", dir: node.dir! })}
+            className="h-7 w-full rounded-md px-1.5 text-left text-[12.5px] text-stone-400 transition-colors hover:bg-stone-200/60 hover:text-stone-600">
+            Empty · add a doc
+          </button>
+        </li>
+      )}
     </ul>
   );
 }
 
 export default function Sidebar({ login, avatar }: { login: string; avatar: string }) {
   const [paths, setPaths] = useState<string[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [creating, setCreating] = useState<Creating>(null);
   const router = useRouter();
   const pathname = usePathname();
   const current = pathname.startsWith("/d/") ? pathname.slice(3).split("/").map(decodeURIComponent).join("/") : "";
 
+  // Load the doc list, and check again every 15s while the tab is visible, so changes made
+  // through MCP or by teammates show without a reload. The open doc listens for "folio:versions".
   useEffect(() => {
+    let last = "";
     const load = () =>
       fetch("/api/docs", { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
-        .then((j) => j && setPaths(j.paths));
+        .then((j: { docs: Record<string, string>; folders: string[] } | null) => {
+          if (!j) return;
+          const key = JSON.stringify(j);
+          if (key === last) return;
+          last = key;
+          setPaths(Object.keys(j.docs));
+          setFolders(j.folders);
+          window.dispatchEvent(new CustomEvent("folio:versions", { detail: j.docs }));
+        })
+        .catch(() => {});
+    const onVisible = () => document.visibilityState === "visible" && load();
     load();
+    const timer = setInterval(onVisible, 15_000);
     window.addEventListener("folio:refresh", load);
-    return () => window.removeEventListener("folio:refresh", load);
+    window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("folio:refresh", load);
+      window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   const shown = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    return buildTree(f ? paths.filter((p) => p.toLowerCase().includes(f)) : paths);
-  }, [paths, filter]);
+    if (!f) return buildTree(paths, folders);
+    return buildTree(paths.filter((p) => p.toLowerCase().includes(f)), folders.filter((d) => d.toLowerCase().includes(f)));
+  }, [paths, folders, filter]);
 
   const createRow = (dir: string) =>
     creating?.dir === dir ? (
@@ -226,10 +243,16 @@ export default function Sidebar({ login, avatar }: { login: string; avatar: stri
         key={`${creating.mode}:${dir}`}
         creating={creating}
         onCancel={() => setCreating(null)}
-        onCreated={(p) => {
-          setCreating(null);
+        onCreated={(kind, p) => {
           refreshSidebar();
-          router.push(href(p));
+          if (kind === "folder") {
+            // A new folder is empty: go straight to naming its first doc.
+            setFolders((f) => [...f, p]);
+            setCreating({ mode: "doc", dir: p });
+          } else {
+            setCreating(null);
+            router.push(href(p));
+          }
         }}
       />
     ) : null;
@@ -266,7 +289,7 @@ export default function Sidebar({ login, avatar }: { login: string; avatar: stri
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 pb-4">
-        {paths.length === 0 && !creating ? (
+        {paths.length === 0 && folders.length === 0 && !creating ? (
           <p className="px-1.5 py-1 text-[13px] text-stone-400">No docs yet. Press + to start.</p>
         ) : (
           <TreeView node={shown} current={current} creating={creating} onNew={setCreating} createRow={createRow} />

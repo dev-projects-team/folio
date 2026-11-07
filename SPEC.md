@@ -30,7 +30,8 @@ One interface, two backends, chosen by env:
 Operations: `list()` (recursive tree, `.md` only), `read(path)` → `{content, sha}`, `write(path, content, sha|null, author)`, `remove(path, sha, author)`, `rename(from, to, author)`.
 - Paths are validated: relative, no `..`, no leading `/` or `.`, end in `.md`, characters `[A-Za-z0-9 _\-./]`.
 - `write` sends the `sha` the editor loaded. If the file changed since, GitHub returns 409/422 → the app shows "Changed by someone else. Reload." Last-write never silently overwrites.
-- Folders: GitHub has no empty folders, so "new folder" creates `folder/README.md`.
+- Folders are plain containers (no folder page). Git has no empty folders, so "new folder" creates a hidden `folder/.keep`.
+- `snapshot()` returns every doc (path → sha) and every folder in one call. The sidebar polls it every 15s, so MCP edits show without a reload.
 
 ## Auth
 - GitHub OAuth app (owned by the org). Routes `/api/auth/login`, `/api/auth/callback`, `/api/auth/logout`.

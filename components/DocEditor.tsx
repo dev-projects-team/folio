@@ -16,26 +16,55 @@ export default function DocEditor({ path }: { path: string }) {
   const editor = useCreateBlockNote();
   const router = useRouter();
   const sha = useRef<string>("");
+  // Every sha this tab has loaded or saved. A poll that reports one of these is stale, not a new change.
+  const seen = useRef(new Set<string>());
+  // True while we load remote content into the editor, so that change does not count as a user edit.
+  const applying = useRef(false);
   const [status, setStatus] = useState<Status>("loading");
   const [message, setMessage] = useState("");
   const [name, setName] = useState(path.replace(/\.md$/, ""));
 
+  // Load the doc into the editor. `live` lets a caller drop the result if the page changed meanwhile.
+  const pull = useCallback(async (live: () => boolean = () => true) => {
+    const r = await fetch(url(path), { cache: "no-store" });
+    if (!live()) return;
+    if (r.status === 404) return setStatus("missing");
+    if (!r.ok) return setStatus("error");
+    const doc = await r.json();
+    if (seen.current.has(doc.sha) && sha.current) return; // stale read: we already have this or newer
+    sha.current = doc.sha;
+    seen.current.add(doc.sha);
+    applying.current = true;
+    editor.replaceBlocks(editor.document, editor.tryParseMarkdownToBlocks(doc.content));
+    applying.current = false;
+    setStatus("saved");
+  }, [path, editor]);
+
   useEffect(() => {
     let live = true;
-    (async () => {
-      const r = await fetch(url(path), { cache: "no-store" });
-      if (!live) return;
-      if (r.status === 404) return setStatus("missing");
-      if (!r.ok) return setStatus("error");
-      const doc = await r.json();
-      sha.current = doc.sha;
-      editor.replaceBlocks(editor.document, editor.tryParseMarkdownToBlocks(doc.content));
-      setStatus("saved");
-    })();
+    // pull() sets state only after the fetch resolves, not synchronously in the effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    pull(() => live);
     return () => {
       live = false;
     };
-  }, [path, editor]);
+  }, [pull]);
+
+  // The sidebar polls doc versions. A new version of this doc: reload it if there are no local edits,
+  // otherwise show the conflict state so the user can choose to reload.
+  useEffect(() => {
+    const onVersions = (e: Event) => {
+      const v = (e as CustomEvent<Record<string, string>>).detail[path];
+      if (!v || seen.current.has(v)) return;
+      if (status === "saved") pull();
+      else if (status === "unsaved") {
+        setMessage("Changed by someone else. Reload to see it.");
+        setStatus("conflict");
+      }
+    };
+    window.addEventListener("folio:versions", onVersions);
+    return () => window.removeEventListener("folio:versions", onVersions);
+  }, [path, status, pull]);
 
   const save = useCallback(async () => {
     if (status === "loading" || status === "saving" || status === "missing") return;
@@ -56,6 +85,7 @@ export default function DocEditor({ path }: { path: string }) {
       return setStatus("error");
     }
     sha.current = body.sha;
+    seen.current.add(body.sha);
     setStatus("saved");
   }, [editor, path, status]);
 
@@ -133,7 +163,7 @@ export default function DocEditor({ path }: { path: string }) {
         editor={editor}
         theme="light"
         editable={status !== "loading"}
-        onChange={() => setStatus((s) => (s === "saved" ? "unsaved" : s))}
+        onChange={() => !applying.current && setStatus((s) => (s === "saved" ? "unsaved" : s))}
       />
     </div>
   );

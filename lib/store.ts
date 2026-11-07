@@ -6,9 +6,15 @@ import { createHash } from "node:crypto";
 export type Doc = { content: string; sha: string };
 export class Conflict extends Error {}
 export class NotFound extends Error {}
+export type Snapshot = { docs: Record<string, string>; folders: string[] };
+const hidden = (p: string) => p.split("/").some((s) => s.startsWith("."));
 
 export interface Store {
   list(): Promise<string[]>;
+  // Every doc (path → sha) and every folder, in one call. The app polls this to see changes from MCP or other people.
+  snapshot(): Promise<Snapshot>;
+  // Git cannot store an empty folder, so a folder is made with a hidden "folder/.keep" file.
+  mkdir(dir: string, author: string): Promise<void>;
   read(p: string): Promise<Doc>;
   write(p: string, content: string, sha: string | null, author: string): Promise<string>;
   remove(p: string, sha: string, author: string): Promise<void>;
@@ -26,19 +32,31 @@ class LocalStore implements Store {
   private hash(s: string) {
     return createHash("sha1").update(s).digest("hex");
   }
-  async list() {
-    const out: string[] = [];
+  async snapshot() {
+    const docs: string[] = [], folders: string[] = [];
+    const rel = (full: string) => path.relative(this.root, full).split(path.sep).join("/");
     const walk = async (dir: string) => {
       for (const e of await fs.readdir(dir, { withFileTypes: true })) {
         if (e.name.startsWith(".")) continue;
         const full = path.join(dir, e.name);
-        if (e.isDirectory()) await walk(full);
-        else if (e.name.endsWith(".md")) out.push(path.relative(this.root, full).split(path.sep).join("/"));
+        if (e.isDirectory()) {
+          folders.push(rel(full));
+          await walk(full);
+        } else if (e.name.endsWith(".md")) docs.push(rel(full));
       }
     };
     await fs.mkdir(this.root, { recursive: true });
     await walk(this.root);
-    return out.sort();
+    docs.sort();
+    const shas = await Promise.all(docs.map(async (p) => this.hash(await fs.readFile(this.abs(p), "utf8"))));
+    return { docs: Object.fromEntries(docs.map((p, i) => [p, shas[i]])), folders: folders.sort() };
+  }
+  async list() {
+    return Object.keys((await this.snapshot()).docs);
+  }
+  async mkdir(dir: string) {
+    await fs.mkdir(this.abs(dir), { recursive: true });
+    await fs.writeFile(this.abs(`${dir}/.keep`), "");
   }
   async read(p: string) {
     try {
@@ -93,16 +111,25 @@ class GitHubStore implements Store {
   private enc = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
   async list() {
+    return Object.keys((await this.snapshot()).docs);
+  }
+  // One tree call gives every folder, every doc, and each doc's blob sha (the same sha read() returns).
+  async snapshot() {
     try {
       const t = await this.gh("GET", `/git/trees/${this.branch}?recursive=1`);
-      return (t.tree as { path: string; type: string }[])
-        .filter((e) => e.type === "blob" && e.path.endsWith(".md") && !e.path.split("/").some((s) => s.startsWith(".")))
-        .map((e) => e.path)
-        .sort();
+      const all = (t.tree as { path: string; type: string; sha: string }[]).filter((e) => !hidden(e.path));
+      const docs = all.filter((e) => e.type === "blob" && e.path.endsWith(".md")).sort((a, b) => a.path.localeCompare(b.path));
+      return {
+        docs: Object.fromEntries(docs.map((e) => [e.path, e.sha])),
+        folders: all.filter((e) => e.type === "tree").map((e) => e.path).sort(),
+      };
     } catch (e) {
-      if (e instanceof NotFound || e instanceof Conflict) return []; // empty repo
+      if (e instanceof NotFound || e instanceof Conflict) return { docs: {}, folders: [] }; // empty repo
       throw e;
     }
+  }
+  async mkdir(dir: string, author: string) {
+    await this.write(`${dir}/.keep`, "", null, author);
   }
   async read(p: string) {
     const f = await this.gh("GET", `/contents/${this.enc(p)}?ref=${this.branch}`);
