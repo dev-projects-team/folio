@@ -23,6 +23,17 @@ export default function DocEditor({ path }: { path: string }) {
   const [status, setStatus] = useState<Status>("loading");
   const [message, setMessage] = useState("");
   const [name, setName] = useState(path.replace(/\.md$/, ""));
+  // Page width, remembered in this browser. Wide gives tables room.
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    // Read after mount: localStorage does not exist during server render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWide(localStorage.getItem("folio:wide") === "1");
+  }, []);
+  const toggleWide = () => {
+    localStorage.setItem("folio:wide", wide ? "0" : "1");
+    setWide(!wide);
+  };
 
   // Load the doc into the editor. `live` lets a caller drop the result if the page changed meanwhile.
   const pull = useCallback(async (live: () => boolean = () => true) => {
@@ -139,7 +150,7 @@ export default function DocEditor({ path }: { path: string }) {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className={`mx-auto px-6 py-10 ${wide ? "max-w-none" : "max-w-3xl"}`}>
       <div className="mb-6 flex items-center gap-3">
         <input
           value={name}
@@ -157,6 +168,9 @@ export default function DocEditor({ path }: { path: string }) {
             Save
           </button>
         )}
+        <button onClick={toggleWide} className="text-xs text-stone-400 hover:text-stone-700" title="Change page width">
+          {wide ? "Narrow" : "Wide"}
+        </button>
         <button onClick={remove} className="text-xs text-stone-400 hover:text-red-600">Delete</button>
       </div>
       <BlockNoteView

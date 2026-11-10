@@ -10,3 +10,50 @@ body {
   color: #37352f;
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+/* Tables: size columns to their content, so numbers stay narrow and long text gets room.
+   BlockNote gives every column a 120px minimum, which squeezes long text into very tall rows.
+   Selectors start with .bn-container to beat BlockNote's CSS, which loads after this file. */
+.bn-container .bn-editor [data-content-type="table"] table {
+  width: max-content !important;
+  min-width: 0 !important;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid #ebeae6;
+  border-radius: 6px;
+}
+.bn-container .bn-editor.ProseMirror [data-content-type="table"] :is(td, th):not(.column-resize-dragging) {
+  min-width: 0 !important;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 1px solid #ebeae6;
+  vertical-align: top;
+  line-height: 1.45;
+}
+/* Long text wraps at 22rem; short values stay on one line. (max-width on a td is ignored.) */
+.bn-container .bn-editor [data-content-type="table"] :is(td, th) > p {
+  width: max-content;
+  max-width: 22rem;
+  min-height: 0;
+}
+.bn-container .bn-editor [data-content-type="table"] tr:last-child > :is(td, th) { border-bottom: 0; }
+.bn-container .bn-editor [data-content-type="table"] th {
+  background: #f7f6f3;
+  font-weight: 600;
+  color: #55534e;
+}
+.bn-container .bn-editor [data-content-type="table"] tr:hover > td { background: #fbfbfa; }
+/* Keep the first column (usually the name) in view while scrolling sideways. */
+.bn-container .bn-editor [data-content-type="table"] :is(td, th):first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  border-right: 1px solid #ebeae6;
+}
+/* The sticky first column wraps sooner, so it does not cover the page when you scroll sideways. */
+.bn-container .bn-editor [data-content-type="table"] :is(td, th):first-child > p { max-width: 16rem; }
+.bn-container .bn-editor [data-content-type="table"] th:first-child { background: #f7f6f3; }
+.bn-container .bn-editor [data-content-type="table"] tr:hover > td:first-child { background: #fbfbfa; }
